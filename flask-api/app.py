@@ -121,33 +121,33 @@ class GenreModel(Schema):
     }
 
 
-class MovieModel(Schema):
+class DocumentModel(Schema):
     type = 'object'
     properties = {
         'id': {
             'type': 'string',
         },
-        'title': {
+        'wiki_entity': {
             'type': 'string',
         },
-        'summary': {
-            'type': 'string',
-        },
-        'released': {
-            'type': 'string',
-        },
-        'duration': {
-            'type': 'integer',
-        },
-        'rated': {
-            'type': 'string',
-        },
-        'tagline': {
-            'type': 'string',
-        },
-        'poster_image': {
-            'type': 'string',
-        },
+        # 'summary': {
+        #     'type': 'string',
+        # },
+        # 'released': {
+        #     'type': 'string',
+        # },
+        # 'duration': {
+        #     'type': 'integer',
+        # },
+        # 'rated': {
+        #     'type': 'string',
+        # },
+        # 'tagline': {
+        #     'type': 'string',
+        # },
+        # 'poster_image': {
+        #     'type': 'string',
+        # },
         'my_rating': {
             'type': 'integer',
         }
@@ -191,16 +191,16 @@ def serialize_genre(genre):
     }
 
 
-def serialize_movie(movie, my_rating=None):
+def serialize_document(document, my_rating=None):
     return {
-        'id': movie['tmdbId'],
-        'title': movie['title'],
-        'summary': movie['plot'],
-        'released': movie['released'],
-        'duration': movie['runtime'],
-        'rated': movie['imdbRating'],
-        'tagline': movie['plot'],
-        'poster_image': movie['poster'],
+        'id': document['doc_id'],
+        'wiki_entity': document['wiki_entity'],
+        # 'summary': document['plot'],
+        # 'released': document['released'],
+        # 'duration': document['runtime'],
+        # 'rated': document['imdbRating'],
+        # 'tagline': document['plot'],
+        # 'poster_image': document['poster'],
         'my_rating': my_rating,
     }
 
@@ -210,6 +210,20 @@ def serialize_person(person):
         'id': person['tmdbId'],
         'name': person['name'],
         'poster_image': person['poster'],
+    }
+
+def serialize_subject(subject):
+    return {
+        'subject_entity': subject['subject'],
+        # 'name': person['name'],
+        # 'poster_image': person['poster'],
+    }
+
+def serialize_object(object):
+    return {
+        'object_entity': object['object'],
+        # 'name': person['name'],
+        # 'poster_image': person['poster'],
     }
 
 
@@ -266,11 +280,11 @@ class GenreList(Resource):
         return [serialize_genre(record['genre']) for record in result]
 
 
-class Movie(Resource):
+class Document(Resource):
     @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Find movie by ID',
-        'description': 'Returns a movie',
+        'tags': ['documents'],
+        'summary': 'Find document by ID',
+        'description': 'Returns a document',
         'parameters': [
             {
                 'name': 'Authorization',
@@ -281,7 +295,7 @@ class Movie(Resource):
             },
             {
                 'name': 'id',
-                'description': 'movie tmdbId, a string',
+                'description': 'document tmdbId, a string',
                 'in': 'path',
                 'type': 'string',
                 'required': True,
@@ -289,82 +303,86 @@ class Movie(Resource):
         ],
         'responses': {
             '200': {
-                'description': 'A movie',
-                'schema': MovieModel,
+                'description': 'A document',
+                'schema': DocumentModel,
             },
             '404': {
-                'description': 'movie not found'
+                'description': 'document not found'
             },
         }
     })
     def get(self,id):
-        def get_movie(tx, user_id, id):
+        def get_document(tx, user_id, id):
             return list(tx.run(
                 '''
-                MATCH (movie:Movie {tmdbId: $id})
-                OPTIONAL MATCH (movie)<-[my_rated:RATED]-(me:User {id: $user_id})
-                OPTIONAL MATCH (movie)<-[r:ACTED_IN]-(a:Person)
-                OPTIONAL MATCH (related:Movie)<--(a:Person) WHERE related <> movie
-                OPTIONAL MATCH (movie)-[:IN_GENRE]->(genre:Genre)
-                OPTIONAL MATCH (movie)<-[:DIRECTED]-(d:Person)
-                OPTIONAL MATCH (movie)<-[:PRODUCED]-(p:Person)
-                OPTIONAL MATCH (movie)<-[:WRITER_OF]-(w:Person)
-                WITH DISTINCT movie,
+                MATCH (doc:document {doc_id: $id})
+                OPTIONAL MATCH (doc)<-[my_rated:RATED]-(me:User {id: $user_id})
+                OPTIONAL MATCH (doc)-[:contains_object]->(obj:object)
+                OPTIONAL MATCH (related_obj:document)-[:contains_object]->(obj:object) WHERE related_obj <> doc
+                // OPTIONAL MATCH (doc)-[:IN_GENRE]->(genre:Genre)
+                OPTIONAL MATCH (doc)-[:contains_subject]->(sub:subject)
+                OPTIONAL MATCH (related_sub:document)-[:contains_subject]->(sub:subject) WHERE related_sub <> doc
+
+                // OPTIONAL MATCH (doc)<-[:PRODUCED]-(p:Person)
+                // OPTIONAL MATCH (doc)<-[:WRITER_OF]-(w:Person)
+                WITH DISTINCT doc,
                 my_rated,
-                genre, d, p, w, a, r, related, count(related) AS countRelated
-                ORDER BY countRelated DESC
-                RETURN DISTINCT movie,
+                sub, obj, related_sub, count(related_sub) AS countRelatedSub, related_obj, count(related_obj) AS countRelatedObj
+                ORDER BY countRelatedSub DESC
+                RETURN DISTINCT doc,
                 my_rated.rating AS my_rating,
-                collect(DISTINCT d) AS directors,
-                collect(DISTINCT p) AS producers,
-                collect(DISTINCT w) AS writers,
-                collect(DISTINCT{ name:a.name, id:a.tmdbId, poster_image:a.poster, role:r.role}) AS actors,
-                collect(DISTINCT related) AS related,
-                collect(DISTINCT genre) AS genres
+                collect(DISTINCT sub) AS subjects,
+                collect(DISTINCT obj) AS objects,
+                // collect(DISTINCT w) AS writers,
+                // collect(DISTINCT{ name:a.name, id:a.tmdbId, poster_image:a.poster, role:r.role}) AS actors,
+                collect(DISTINCT related_obj) AS related_obj,
+                collect(DISTINCT related_sub) AS related_sub
+                // collect(DISTINCT genre) AS genres
                 ''', {'user_id': user_id , 'id': id}
             ))
         db = get_db()
 
-        result = db.read_transaction(get_movie, g.user['id'], id)
+        result = db.read_transaction(get_document, g.user['id'], id)
         for record in result:
             return {
-                'id': record['movie']['tmdbId'],
-                'title': record['movie']['title'],
-                'summary': record['movie']['plot'],
-                'released': record['movie']['released'],
-                'duration': record['movie']['runtime'],
-                'rated': record['movie']['rated'],
-                'tagline': record['movie']['plot'],
-                'poster_image': record['movie']['poster'],
+                'id': record['doc']['doc_id'],
+                'wiki_entity': record['doc']['wiki_entity'],
+                # 'summary': record['doc']['plot'],
+                # 'released': record['movie']['released'],
+                # 'duration': record['movie']['runtime'],
+                # 'rated': record['movie']['rated'],
+                # 'tagline': record['movie']['plot'],
+                # 'poster_image': record['movie']['poster'],
                 'my_rating': record['my_rating'],
-                'genres': [serialize_genre(genre) for genre in record['genres']],
-                'directors': [serialize_person(director)for director in record['directors']],
-                'producers': [serialize_person(producer) for producer in record['producers']],
-                'writers': [serialize_person(writer) for writer in record['writers']],
-                'actors': [
-                    {
-                        'id': actor['id'],
-                        'name': actor['name'],
-                        'role': actor['role'],
-                        'poster_image': actor['poster_image'],
-                    } for actor in record['actors']
-                ],
-                'related': [serialize_movie(related) for related in record['related']],
+                # # 'genres': [serialize_genre(genre) for genre in record['genres']],
+                'subjects': [serialize_subject(sub)for sub in record['subjects']],
+                'objects': [serialize_object(obj) for obj in record['objects']],
+                # 'writers': [serialize_person(writer) for writer in record['writers']],
+                # 'actors': [
+                #     {
+                #         'id': actor['id'],
+                #         'name': actor['name'],
+                #         'role': actor['role'],
+                #         'poster_image': actor['poster_image'],
+                #     } for actor in record['actors']
+                # ],
+                'related_obj': [serialize_document(related_obj) for related_obj in record['related_obj']],
+                'related_sub': [serialize_document(related_sub) for related_sub in record['related_sub']],
             }
-        return {'message': 'movie not found'}, 404
+        return {'message': 'document not found'}, 404
 
 
-class MovieList(Resource):
+class DocumentList(Resource):
     @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Find all movies',
-        'description': 'Returns a list of movies',
+        'tags': ['documents'],
+        'summary': 'Find all documents',
+        'description': 'Returns a list of documents',
         'responses': {
             '200': {
-                'description': 'A list of movies',
+                'description': 'A list of documents',
                 'schema': {
                     'type': 'array',
-                    'items': MovieModel,
+                    'items': DocumentModel,
                 }
             }
         }
@@ -373,12 +391,12 @@ class MovieList(Resource):
         def get_movies(tx):
             return list(tx.run(
                 '''
-                MATCH (movie:Movie) RETURN movie
+                MATCH (doc:document) RETURN doc
                 '''
             ))
         db = get_db()
         result = db.read_transaction(get_movies)
-        return [serialize_movie(record['movie']) for record in result]
+        return [serialize_document(record['doc']) for record in result]
 
 
 class MovieListByGenre(Resource):
@@ -400,7 +418,7 @@ class MovieListByGenre(Resource):
                 'description': 'A list of movies with the specified genre',
                 'schema': {
                     'type': 'array',
-                    'items': MovieModel,
+                    'items': DocumentModel,
                 }
             }
         }
@@ -447,7 +465,7 @@ class MovieListByDateRange(Resource):
                 'description': 'A list of movies released between the specified years',
                 'schema': {
                     'type': 'array',
-                    'items': MovieModel,
+                    'items': DocumentModel,
                 }
             }
         }
@@ -491,7 +509,7 @@ class MovieListByPersonActedIn(Resource):
                 'description': 'A list of movies the specified person has acted in',
                 'schema': {
                     'type': 'array',
-                    'items': MovieModel,
+                    'items': DocumentModel,
                 }
             }
         }
@@ -528,7 +546,7 @@ class MovieListByWrittenBy(Resource):
                 'description': 'A list of movies the specified person has written',
                 'schema': {
                     'type': 'array',
-                    'items': MovieModel,
+                    'items': DocumentModel,
                 }
             }
         }
@@ -565,7 +583,7 @@ class MovieListByDirectedBy(Resource):
                 'description': 'A list of movies the specified person has directed',
                 'schema': {
                     'type': 'array',
-                    'items': MovieModel,
+                    'items': DocumentModel,
                 }
             }
         }
@@ -583,11 +601,11 @@ class MovieListByDirectedBy(Resource):
         return [serialize_movie(record['movie']) for record in result]
 
 
-class MovieListRatedByMe(Resource):
+class DocumentListRatedByMe(Resource):
     @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'A list of movies the authorized user has rated.',
-        'description': 'A list of movies the authorized user has rated.',
+        'tags': ['documents'],
+        'summary': 'A list of documents the authorized user has rated.',
+        'description': 'A list of documents the authorized user has rated.',
         'parameters': [
             {
                 'name': 'Authorization',
@@ -599,26 +617,26 @@ class MovieListRatedByMe(Resource):
         ],
         'responses': {
             '200': {
-                'description': 'A list of movies the authorized user has rated',
+                'description': 'A list of documents the authorized user has rated',
                 'schema': {
                     'type': 'array',
-                    'items': MovieModel,
+                    'items': DocumentModel,
                 }
             }
         }
     })
     @login_required
     def get(self):
-        def get_movies_rated_by_me(tx, user_id):
+        def get_documents_rated_by_me(tx, user_id):
             return list(tx.run(
                 '''
-                MATCH (:User {id: $user_id})-[rated:RATED]->(movie:Movie)
-                RETURN DISTINCT movie, rated.rating as my_rating
+                MATCH (:User {id: $user_id})-[rated:RATED]->(doc:document)
+                RETURN DISTINCT doc, rated.rating as my_rating
                 ''', {'user_id': user_id}
             ))
         db = get_db()
-        result = db.read_transaction(get_movies_rated_by_me, g.user['id'])
-        return [serialize_movie(record['movie'], record['my_rating']) for record in result]
+        result = db.read_transaction(get_documents_rated_by_me, g.user['id'])
+        return [serialize_document(record['doc'], record['my_rating']) for record in result]
 
 
 class MovieListRecommended(Resource):
@@ -640,7 +658,7 @@ class MovieListRecommended(Resource):
                 'description': 'A list of recommended movies for the authorized user',
                 'schema': {
                     'type': 'array',
-                    'items': MovieModel,
+                    'items': DocumentModel,
                 }
             }
         }
@@ -992,11 +1010,11 @@ class UserMe(Resource):
         return serialize_user(g.user)
 
 
-class RateMovie(Resource):
+class RateDocument(Resource):
     @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Rate a movie from',
-        'description': 'Rate a movie from 0-5 inclusive',
+        'tags': ['documents'],
+        'summary': 'Rate a document from',
+        'description': 'Rate a document from 0-5 inclusive',
         'parameters': [
             {
                 'name': 'Authorization',
@@ -1007,7 +1025,7 @@ class RateMovie(Resource):
             },
             {
                 'name': 'id',
-                'description': 'movie tmdbId',
+                'description': 'document tmdbId',
                 'in': 'path',
                 'type': 'string',
             },
@@ -1026,7 +1044,7 @@ class RateMovie(Resource):
         ],
         'responses': {
             '200': {
-                'description': 'movie rating saved'
+                'description': 'document rating saved'
             },
             '401': {
                 'description': 'invalid / missing authentication'
@@ -1040,24 +1058,24 @@ class RateMovie(Resource):
         args = parser.parse_args()
         rating = args['rating']
 
-        def rate_movie(tx, user_id, movie_id, rating):
+        def rate_document(tx, user_id, document_id, rating):
             return tx.run(
                 '''
-                MATCH (u:User {id: $user_id}),(m:Movie {tmdbId: $movie_id})
+                MATCH (u:User {id: $user_id}),(m:document {doc_id: $document_id})
                 MERGE (u)-[r:RATED]->(m)
                 SET r.rating = $rating
                 RETURN m
-                ''', {'user_id': user_id, 'movie_id': movie_id, 'rating': rating}
+                ''', {'user_id': user_id, 'document_id': document_id, 'rating': rating}
             )
 
         db = get_db()
-        results = db.write_transaction(rate_movie, g.user['id'], id, rating)
+        results = db.write_transaction(rate_document, g.user['id'], id, rating)
         return {}
 
     @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Delete your rating for a movie',
-        'description': 'Delete your rating for a movie',
+        'tags': ['documents'],
+        'summary': 'Delete your rating for a document',
+        'description': 'Delete your rating for a document',
         'parameters': [
             {
                 'name': 'Authorization',
@@ -1068,14 +1086,14 @@ class RateMovie(Resource):
             },
             {
                 'name': 'id',
-                'description': 'movie tmdbId',
+                'description': 'document tmdbId',
                 'in': 'path',
                 'type': 'string',
             },
         ],
         'responses': {
             '204': {
-                'description': 'movie rating deleted'
+                'description': 'document rating deleted'
             },
             '401': {
                 'description': 'invalid / missing authentication'
@@ -1084,11 +1102,11 @@ class RateMovie(Resource):
     })
     @login_required
     def delete(self, id):
-        def delete_rating(tx, user_id, movie_id):
+        def delete_rating(tx, user_id, document_id):
             return tx.run(
                 '''
-                MATCH (u:User {id: $user_id})-[r:RATED]->(m:Movie {tmdbId: $movie_id}) DELETE r
-                ''', {'movie_id': movie_id, 'user_id': user_id}
+                MATCH (u:User {id: $user_id})-[r:RATED]->(m:document {doc_id: $document_id}) DELETE r
+                ''', {'document_id': document_id, 'user_id': user_id}
             )
         db = get_db()
         db.write_transaction(delete_rating, g.user['id'], id)
@@ -1097,15 +1115,15 @@ class RateMovie(Resource):
 
 api.add_resource(ApiDocs, '/docs', '/docs/<path:path>')
 api.add_resource(GenreList, '/api/v0/genres')
-api.add_resource(Movie, '/api/v0/movies/<string:id>')
-api.add_resource(RateMovie, '/api/v0/movies/<string:id>/rate')
-api.add_resource(MovieList, '/api/v0/movies')
+api.add_resource(Document, '/api/v0/documents/<string:id>')
+api.add_resource(RateDocument, '/api/v0/documents/<string:id>/rate')
+api.add_resource(DocumentList, '/api/v0/documents')
 api.add_resource(MovieListByGenre, '/api/v0/movies/genre/<string:genre_id>/')
 api.add_resource(MovieListByDateRange, '/api/v0/movies/daterange/<int:start>/<int:end>')
 api.add_resource(MovieListByPersonActedIn, '/api/v0/movies/acted_in_by/<string:person_id>')
 api.add_resource(MovieListByWrittenBy, '/api/v0/movies/written_by/<string:person_id>')
 api.add_resource(MovieListByDirectedBy, '/api/v0/movies/directed_by/<string:person_id>')
-api.add_resource(MovieListRatedByMe, '/api/v0/movies/rated')
+api.add_resource(DocumentListRatedByMe, '/api/v0/documents/rated')
 api.add_resource(MovieListRecommended, '/api/v0/movies/recommended')
 api.add_resource(Person, '/api/v0/people/<string:id>')
 api.add_resource(PersonList, '/api/v0/people')

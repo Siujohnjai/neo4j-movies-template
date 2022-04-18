@@ -194,6 +194,17 @@ class RecommendationModel(Schema):
         }
     }
 
+class SearchModel(Schema):
+    type = 'object'
+    properties = {
+        'search_result_id': {
+            'type': 'array',
+        },
+        'search_result_title': {
+            'type': 'array',
+        }
+    }
+
 
 def serialize_genre(genre):
     return {
@@ -204,7 +215,7 @@ def serialize_genre(genre):
 
 def serialize_document(document, my_rating=None):
     return {
-        'id': document['doc_id'],
+        'id': document['id'],
         'wiki_entity': document['wiki_entity'],
         # 'summary': document['plot'],
         # 'released': document['released'],
@@ -251,6 +262,14 @@ def serialize_recommendation(user):
     return {
         'id': user['id'],
         'recommendation': user['recommendation']
+    }
+
+def serialize_search(results):
+    # for record in results:
+    #     print(record)
+    return {
+        'search_result_id':[record[0] for record in results],
+        'search_result_title':[record[1] for record in results]        
     }
 
 
@@ -332,13 +351,13 @@ class Document(Resource):
         def get_document(tx, user_id, id):
             return list(tx.run(
                 '''
-                MATCH (doc:document {doc_id: $id})
+                MATCH (doc:Document {id: $id})
                 OPTIONAL MATCH (doc)<-[my_rated:RATED]-(me:User {id: $user_id})
                 OPTIONAL MATCH (doc)-[:contains_object]->(obj:object)
-                OPTIONAL MATCH (related_obj:document)-[:contains_object]->(obj:object) WHERE related_obj <> doc
+                OPTIONAL MATCH (related_obj:Document)-[:contains_object]->(obj:object) WHERE related_obj <> doc
                 // OPTIONAL MATCH (doc)-[:IN_GENRE]->(genre:Genre)
                 OPTIONAL MATCH (doc)-[:contains_subject]->(sub:subject)
-                OPTIONAL MATCH (related_sub:document)-[:contains_subject]->(sub:subject) WHERE related_sub <> doc
+                OPTIONAL MATCH (related_sub:Document)-[:contains_subject]->(sub:subject) WHERE related_sub <> doc
 
                 // OPTIONAL MATCH (doc)<-[:PRODUCED]-(p:Person)
                 // OPTIONAL MATCH (doc)<-[:WRITER_OF]-(w:Person)
@@ -362,7 +381,7 @@ class Document(Resource):
         result = db.read_transaction(get_document, g.user['id'], id)
         for record in result:
             return {
-                'id': record['doc']['doc_id'],
+                'id': record['doc']['id'],
                 'wiki_entity': record['doc']['wiki_entity'],
                 # 'summary': record['doc']['plot'],
                 # 'released': record['movie']['released'],
@@ -408,7 +427,7 @@ class DocumentList(Resource):
         def get_movies(tx):
             return list(tx.run(
                 '''
-                MATCH (doc:document) RETURN doc
+                MATCH (doc:Document) RETURN doc
                 '''
             ))
         db = get_db()
@@ -647,7 +666,7 @@ class DocumentListRatedByMe(Resource):
         def get_documents_rated_by_me(tx, user_id):
             return list(tx.run(
                 '''
-                MATCH (:User {id: $user_id})-[rated:RATED]->(doc:document)
+                MATCH (:User {id: $user_id})-[rated:RATED]->(doc:Document)
                 RETURN DISTINCT doc, rated.rating as my_rating
                 ''', {'user_id': user_id}
             ))
@@ -970,6 +989,8 @@ class Register(Resource):
             ).single()
 
         results = db.write_transaction(create_user, username, password)
+        print(results)
+
         user = results['user']
         return serialize_user(user), 201
 
@@ -1114,7 +1135,7 @@ class RateDocument(Resource):
         def rate_document(tx, user_id, document_id, rating):
             return tx.run(
                 '''
-                MATCH (u:User {id: $user_id}),(m:document {doc_id: $document_id})
+                MATCH (u:User {id: $user_id}),(m:Document {id: $document_id})
                 MERGE (u)-[r:RATED]->(m)
                 SET r.rating = $rating
                 RETURN m
@@ -1125,59 +1146,71 @@ class RateDocument(Resource):
         results = db.write_transaction(rate_document, g.user['id'], id, rating)
         return {}
 
+class SearchDocument(Resource):
     @swagger.doc({
         'tags': ['documents'],
-        'summary': 'Delete your rating for a document',
-        'description': 'Delete your rating for a document',
+        'summary': 'Search a document from keywords',
+        'description': 'Search a document',
         'parameters': [
             {
-                'name': 'Authorization',
-                'in': 'header',
-                'type': 'string',
-                'required': True,
-                'default': 'Token <token goes here>',
-            },
-            {
-                'name': 'id',
-                'description': 'document tmdbId',
-                'in': 'path',
-                'type': 'string',
+                'name': 'body',
+                'in': 'body',
+                'schema': {
+                    'type': 'object',
+                    'properties': {
+                        'search_keyword': {
+                            'type': 'string',
+                        },
+                    }
+                }
             },
         ],
         'responses': {
-            '204': {
-                'description': 'document rating deleted'
+            '200': {
+                'description': 'document searched',
+                'schema': SearchModel,
+
             },
-            '401': {
-                'description': 'invalid / missing authentication'
+            '400': {
+                'description': 'Error message(s)'
             }
         }
     })
-    @login_required
-    def delete(self, id):
-        def delete_rating(tx, user_id, document_id):
+
+    def post(self):
+        data = request.get_json()
+        search_keyword = data.get('search_keyword')
+
+        def search_document(tx, search_keyword):
             return tx.run(
                 '''
-                MATCH (u:User {id: $user_id})-[r:RATED]->(m:document {doc_id: $document_id}) DELETE r
-                ''', {'document_id': document_id, 'user_id': user_id}
-            )
+                CALL db.index.fulltext.queryNodes("titlesAndText", $search_keyword) YIELD node, score
+                RETURN node.id AS id, node.title AS title
+                LIMIT 50
+                ''', {'search_keyword': search_keyword}
+            ).values()
+
         db = get_db()
-        db.write_transaction(delete_rating, g.user['id'], id)
-        return {}, 204
+        results = db.write_transaction(search_document, search_keyword)
+        # print(results)
+        return serialize_search(results)
+
+ 
 
 
 api.add_resource(ApiDocs, '/docs', '/docs/<path:path>')
 api.add_resource(GenreList, '/api/v0/genres')
 api.add_resource(Document, '/api/v0/documents/<string:id>')
 api.add_resource(RateDocument, '/api/v0/documents/<string:id>/rate')
+api.add_resource(SearchDocument, '/api/v0/documents/search')
 api.add_resource(DocumentList, '/api/v0/documents')
+api.add_resource(DocumentListRatedByMe, '/api/v0/documents/rated')
+api.add_resource(DocumentListRecommended, '/api/v0/documents/recommended')
 api.add_resource(MovieListByGenre, '/api/v0/movies/genre/<string:genre_id>/')
 api.add_resource(MovieListByDateRange, '/api/v0/movies/daterange/<int:start>/<int:end>')
 api.add_resource(MovieListByPersonActedIn, '/api/v0/movies/acted_in_by/<string:person_id>')
 api.add_resource(MovieListByWrittenBy, '/api/v0/movies/written_by/<string:person_id>')
 api.add_resource(MovieListByDirectedBy, '/api/v0/movies/directed_by/<string:person_id>')
-api.add_resource(DocumentListRatedByMe, '/api/v0/documents/rated')
-api.add_resource(DocumentListRecommended, '/api/v0/documents/recommended')
 api.add_resource(Person, '/api/v0/people/<string:id>')
 api.add_resource(PersonList, '/api/v0/people')
 api.add_resource(PersonBacon, '/api/v0/people/bacon')

@@ -194,14 +194,22 @@ class RecommendationModel(Schema):
         }
     }
 
+class SimDocumentModel(Schema):
+    type = 'object'
+    properties = {
+        'sim_top20': {
+            'type': 'string',
+        }
+    }
+
 class SearchModel(Schema):
     type = 'object'
     properties = {
         'search_result_id': {
-            'type': 'array',
+            'type': 'string',
         },
         'search_result_title': {
-            'type': 'array',
+            'type': 'string',
         }
     }
 
@@ -262,6 +270,11 @@ def serialize_recommendation(user):
     return {
         'id': user['id'],
         'recommendation': user['recommendation']
+    }
+
+def serialize_sim_documents(sim_top20):
+    return {
+        'sim_top20': sim_top20[0]
     }
 
 def serialize_search(results):
@@ -1146,6 +1159,68 @@ class RateDocument(Resource):
         results = db.write_transaction(rate_document, g.user['id'], id, rating)
         return {}
 
+class ReadDocument(Resource):
+    @swagger.doc({
+        'tags': ['documents'],
+        'summary': 'Read a document',
+        'description': 'Read a document',
+        'parameters': [
+            {
+                'name': 'Authorization',
+                'in': 'header',
+                'type': 'string',
+                'required': True,
+                'default': 'Token <token goes here>',
+            },
+            {
+                'name': 'id',
+                'description': 'document tmdbId',
+                'in': 'path',
+                'type': 'string',
+            },
+            # {
+            #     'name': 'body',
+            #     'in': 'body',
+            #     'schema': {
+            #         'type': 'object',
+            #         'properties': {
+            #             'rating': {
+            #                 'type': 'integer',
+            #             },
+            #         }
+            #     }
+            # },
+        ],
+        'responses': {
+            '200': {
+                'description': 'document rating saved',
+                'schema': SimDocumentModel
+            },
+            '401': {
+                'description': 'invalid / missing authentication'
+            }
+        }
+    })
+    @login_required
+    def post(self, id):
+        # parser = reqparse.RequestParser()
+        # parser.add_argument('rating', choices=list(range(0, 6)), type=int, required=True, help='A rating from 0 - 5 inclusive (integers)')
+        # args = parser.parse_args()
+        # rating = args['rating']
+
+        def read_document(tx, user_id, document_id):
+            return tx.run(
+                '''
+                MATCH (u:User {id: $user_id}),(doc:Document {id: $document_id})
+                MERGE (u)-[r:read]->(doc)
+                RETURN doc.sim_top20 AS sim_top20
+                ''', {'user_id': user_id, 'document_id': document_id}
+            ).single()
+
+        db = get_db()
+        results = db.write_transaction(read_document, g.user['id'], id)
+        return serialize_sim_documents(results)
+
 class SearchDocument(Resource):
     @swagger.doc({
         'tags': ['documents'],
@@ -1202,6 +1277,7 @@ api.add_resource(ApiDocs, '/docs', '/docs/<path:path>')
 api.add_resource(GenreList, '/api/v0/genres')
 api.add_resource(Document, '/api/v0/documents/<string:id>')
 api.add_resource(RateDocument, '/api/v0/documents/<string:id>/rate')
+api.add_resource(ReadDocument, '/api/v0/documents/<string:id>/read')
 api.add_resource(SearchDocument, '/api/v0/documents/search')
 api.add_resource(DocumentList, '/api/v0/documents')
 api.add_resource(DocumentListRatedByMe, '/api/v0/documents/rated')

@@ -206,10 +206,10 @@ class SearchModel(Schema):
     type = 'object'
     properties = {
         'search_result_id': {
-            'type': 'array',
+            'type': 'string',
         },
         'search_result_title': {
-            'type': 'array',
+            'type': 'string',
         }
     }
 
@@ -952,6 +952,9 @@ class Register(Resource):
                         },
                         'password': {
                             'type': 'string',
+                        },
+                        'api_key': {
+                            'type': 'string',
                         }
                     }
                 }
@@ -971,10 +974,13 @@ class Register(Resource):
         data = request.get_json()
         username = data.get('username')
         password = data.get('password')
+        api_key = data.get('api_key')
         if not username:
             return {'username': 'This field is required.'}, 400
         if not password:
             return {'password': 'This field is required.'}, 400
+        if not api_key:
+            return {'api_key': 'This field is required.'}, 400
 
         def get_user_by_username(tx, username):
             return tx.run(
@@ -986,9 +992,9 @@ class Register(Resource):
         db = get_db()
         result = db.read_transaction(get_user_by_username, username)
         if result and result.get('user'):
-            return {'username': 'username already in use'}, 400
+            return {'username': 'Email already in use'}, 400
 
-        def create_user(tx, username, password):
+        def create_user(tx, username, password, api_key):
             return tx.run(
                 '''
                 CREATE (user:User {id: $id, username: $username, password: $password, api_key: $api_key}) RETURN user
@@ -997,12 +1003,12 @@ class Register(Resource):
                     'id': str(uuid.uuid4()),
                     'username': username,
                     'password': hash_password(username, password),
-                    'api_key': binascii.hexlify(os.urandom(20)).decode()
+                    'api_key': api_key
                 }
             ).single()
 
-        results = db.write_transaction(create_user, username, password)
-        print(results)
+        results = db.write_transaction(create_user, username, password, api_key)
+        # print(results)
 
         user = results['user']
         return serialize_user(user), 201

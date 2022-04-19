@@ -206,10 +206,10 @@ class SearchModel(Schema):
     type = 'object'
     properties = {
         'search_result_id': {
-            'type': 'string',
+            'type': 'array',
         },
         'search_result_title': {
-            'type': 'string',
+            'type': 'array',
         }
     }
 

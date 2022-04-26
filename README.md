@@ -34,6 +34,5 @@ export FLASK_APP=app.py
 flask run
 ```
 
-* Take a look at the docs at [http://localhost:5000/docs](http://localhost:5000/docs)
 
 
